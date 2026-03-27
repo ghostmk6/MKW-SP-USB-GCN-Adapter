@@ -1,5 +1,7 @@
 #include "InputManager.hh"
 
+#include "sp/input/GCNAdapter.h"
+
 #include "game/system/RaceConfig.hh"
 #include "game/system/RaceManager.hh"
 #include "game/system/SaveManager.hh"
@@ -84,6 +86,116 @@ void WiiPad::processClassic(void *r4, RaceInputState &raceInputState, UIInputSta
 }
 
 void GCPad::process(RaceInputState &raceInputState, UIInputState &uiInputState) {
+    s32 controllerId = getControllerId();
+    if (controllerId >= 0 && static_cast<u32>(controllerId) < GCN_PORT_COUNT) {
+        const GCNPortState *port = GCNAdapter_getPort(static_cast<u32>(controllerId));
+        if (GCNAdapter_isConnected() && port && port->connected) {
+            RaceInputState::Reset(raceInputState);
+
+            raceInputState.accelerate = port->a;
+            raceInputState.brake = port->b;
+            raceInputState.item = port->l || port->triggerL > 170;
+            raceInputState.drift = port->r || port->triggerR > 170;
+
+            u16 rawButtons = 0;
+            if (port->dpadLeft) {
+                rawButtons |= PAD_BUTTON_LEFT;
+            }
+            if (port->dpadRight) {
+                rawButtons |= PAD_BUTTON_RIGHT;
+            }
+            if (port->dpadDown) {
+                rawButtons |= PAD_BUTTON_DOWN;
+            }
+            if (port->dpadUp) {
+                rawButtons |= PAD_BUTTON_UP;
+            }
+            if (port->z) {
+                rawButtons |= PAD_TRIGGER_Z;
+            }
+            if (port->r || port->triggerR > 170) {
+                rawButtons |= PAD_TRIGGER_R;
+            }
+            if (port->l || port->triggerL > 170) {
+                rawButtons |= PAD_TRIGGER_L;
+            }
+            if (port->a) {
+                rawButtons |= PAD_BUTTON_A;
+            }
+            if (port->b) {
+                rawButtons |= PAD_BUTTON_B;
+            }
+            if (port->x) {
+                rawButtons |= PAD_BUTTON_X;
+            }
+            if (port->y) {
+                rawButtons |= PAD_BUTTON_Y;
+            }
+            if (port->start) {
+                rawButtons |= PAD_BUTTON_START;
+            }
+            raceInputState.rawButtons = rawButtons;
+
+            s32 sx = static_cast<s32>(port->stickX) - 128;
+            s32 sy = static_cast<s32>(port->stickY) - 128;
+            auto scaleAxis = [](s32 raw) -> u8 {
+                s32 scaled = raw * 14 / 127;
+                if (scaled < -7) {
+                    scaled = -7;
+                }
+                if (scaled > 7) {
+                    scaled = 7;
+                }
+                return static_cast<u8>(scaled + 7);
+            };
+            u8 rawStickX = scaleAxis(sx);
+            u8 rawStickY = scaleAxis(sy);
+            RaceInputState::SetStickX(raceInputState, rawStickX);
+            RaceInputState::SetStickY(raceInputState, rawStickY);
+            raceInputState.rawStick.x = rawStickX;
+            raceInputState.rawStick.y = rawStickY;
+
+            u8 trickRaw = Trick::Off;
+            if (port->dpadUp) {
+                trickRaw = Trick::Up;
+            }
+            if (port->dpadDown) {
+                trickRaw = Trick::Down;
+            }
+            if (port->dpadLeft) {
+                trickRaw = Trick::Left;
+            }
+            if (port->dpadRight) {
+                trickRaw = Trick::Right;
+            }
+            raceInputState.rawTrick = trickRaw;
+            RaceInputState::SetTrick(raceInputState, trickRaw);
+
+            raceInputState.lookBackwards = port->x;
+
+            extern bool g_speedModIsEnabled;
+            if (g_speedModIsEnabled && port->b && (port->r || port->triggerR > 170)) {
+                raceInputState.brakeDrift = true;
+            }
+
+            processSimplified(raceInputState, port->z);
+
+            if (auto *saveStateManager = SP::SaveStateManager::Instance()) {
+                saveStateManager->processInput(port->z);
+            }
+
+            raceInputState.isValid = true;
+
+            uiInputState.stick.x = static_cast<f32>(sx) / 127.0f;
+            uiInputState.stick.y = -static_cast<f32>(sy) / 127.0f;
+
+            if (InputManager::Instance()->isMirror()) {
+                uiInputState.stick.x *= -1.0f;
+            }
+            return;
+        }
+    }
+
     REPLACED(process)(raceInputState, uiInputState);
 
     processSimplified(raceInputState, raceInputState.rawButtons & PAD_BUTTON_Y);
@@ -247,6 +359,9 @@ void InputManager::calc() {
     for (u32 i = 0; i < 12; i++) {
         m_extraGhostProxies[i].calc(m_isPaused);
     }
+
+    GCNAdapter_poll();
+    GCNAdapter_sendRumble();
 }
 
 void InputManager::initGhostProxies() {
@@ -293,6 +408,8 @@ InputManager *InputManager::CreateInstance() {
         s_instance->m_extraGhostProxies[i].PadProxy::setPad(&s_instance->m_dummyPad, nullptr);
     }
     s_instance->m_rollbacks = new PadRollback[12];
+
+    GCNAdapter_init();
 
     return s_instance;
 }
