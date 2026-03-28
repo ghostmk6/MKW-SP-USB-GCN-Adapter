@@ -90,15 +90,6 @@ void WiiPad::processClassic(void *r4, RaceInputState &raceInputState, UIInputSta
 }
 
 void GCPad::process(RaceInputState &raceInputState, UIInputState &uiInputState) {
-    // Lazy init: attempt adapter detection on first process() call.
-    // This runs after the health/safety screen when MKW's input system is live,
-    // matching the timing used by CTGP and the bslug PADInit hook.
-    static bool s_initAttempted = false;
-    if (!s_initAttempted) {
-        s_initAttempted = true;
-        GCNAdapter_init();
-    }
-
     s32 controllerId = getControllerId();
     if (controllerId >= 0 && static_cast<u32>(controllerId) < GCN_PORT_COUNT) {
         const GCNPortState *port = GCNAdapter_getPort(static_cast<u32>(controllerId));
@@ -356,6 +347,14 @@ void InputManager::calc() {
 
     for (u32 i = 0; i < 12; i++) {
         m_extraGhostProxies[i].calc(m_isPaused);
+    }
+
+    // Lazy init on first calc() call - runs every frame so guaranteed to fire
+    // after the health screen regardless of which controller type is in use.
+    static bool s_adapterInitDone = false;
+    if (!s_adapterInitDone) {
+        s_adapterInitDone = true;
+        GCNAdapter_init();
     }
 
     GCNAdapter_poll();
