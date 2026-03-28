@@ -15,6 +15,9 @@ extern "C" {
 extern "C" {
 #include "sp/keyboard/SIKeyboard.h"
 }
+extern "C" {
+#include "sp/input/GCNAdapter.h"
+}
 #include "sp/net/Net.hh"
 #include "sp/security/Function.hh"
 #include "sp/security/Heap.hh"
@@ -103,6 +106,7 @@ static void Init() {
     Console::Print("Initializing USB...");
     bool usbWasInit = Usb_init();
     assert(usbWasInit);
+    GCNAdapter_init();
     Console::Print(" done.\n");
 
     Console::Print("Initializing network...");
