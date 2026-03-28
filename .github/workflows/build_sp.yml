@@ -31,7 +31,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: cache
-          key: ${{ runner.os }}-cache-dkp-r42.2-1
+          key: ${{ runner.os }}-cache-dkp-r42.2-3
       - name: Download devkitPPC
         if: steps.cache-1.outputs.cache-hit != 'true'
         run: |
@@ -41,23 +41,15 @@ jobs:
       - name: Extract devkitPPC
         run: tar -xf cache/devkitPPC-r42.2-1-linux_x86_64.pkg.tar.zst
       - name: Install ninja
-        run: sudo apt install ninja-build
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: Install protoc
-        run: sudo apt install protobuf-compiler
+        run: sudo apt-get install -y protobuf-compiler
       - name: Install Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install json5
-        run: pip install json5
-      - name: Install pyelftools
-        run: pip install pyelftools
-      - name: Install itanium_demangler
-        run: pip install itanium_demangler
-      - name: Install protobuf
-        run: pip uninstall -y protobuf || true && pip install --no-cache-dir "protobuf==3.20.3"
-      - name: Install setuptools
-        run: pip install setuptools
+      - name: Install Python packages
+        run: pip install --no-cache-dir "protobuf==3.20.3" json5 pyelftools itanium_demangler setuptools
       - name: Compile
         run: ./build.py --ci -- ${{ matrix.profile }}
       - name: Upload result
