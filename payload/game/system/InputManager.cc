@@ -398,8 +398,6 @@ InputManager *InputManager::CreateInstance() {
     }
     s_instance->m_rollbacks = new PadRollback[12];
 
-    GCNAdapter_init();
-
     return s_instance;
 }
 
