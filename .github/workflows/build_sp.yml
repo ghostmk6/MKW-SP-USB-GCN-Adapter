@@ -31,7 +31,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: cache
-          key: ${{ runner.os }}-cache-dkp-r42.2-3
+          key: ${{ runner.os }}-cache-dkp-r42.2-4
       - name: Download devkitPPC
         if: steps.cache-1.outputs.cache-hit != 'true'
         run: |
@@ -44,12 +44,32 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: Install protoc
         run: sudo apt-get install -y protobuf-compiler
-      - name: Install Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Install Python packages
-        run: pip install --no-cache-dir "protobuf==3.20.3" json5 pyelftools itanium_demangler setuptools
+        run: |
+          pip install --no-cache-dir \
+            "protobuf==3.20.3" \
+            "grpcio-tools==1.48.2" \
+            json5 \
+            pyelftools \
+            itanium_demangler \
+            setuptools
+      - name: Pre-generate nanopb_pb2
+        run: |
+          cd vendor/nanopb/generator/proto
+          python3 -c "
+          import subprocess, sys
+          result = subprocess.run(
+            ['protoc', '--python_out=.', 'nanopb.proto', '-I.'],
+            capture_output=True, text=True
+          )
+          print(result.stdout)
+          print(result.stderr)
+          sys.exit(result.returncode)
+          "
       - name: Compile
         run: ./build.py --ci -- ${{ matrix.profile }}
       - name: Upload result
