@@ -19,9 +19,10 @@ jobs:
         profile:
           - debug
           - test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       DEVKITPPC: opt/devkitpro/devkitPPC
+      PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION: python
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -31,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: cache
-          key: ${{ runner.os }}-cache-dkp-r42.2-4
+          key: ubuntu22-cache-dkp-r42.2-1
       - name: Download devkitPPC
         if: steps.cache-1.outputs.cache-hit != 'true'
         run: |
@@ -40,36 +41,13 @@ jobs:
           cd ..
       - name: Extract devkitPPC
         run: tar -xf cache/devkitPPC-r42.2-1-linux_x86_64.pkg.tar.zst
-      - name: Install ninja
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
-      - name: Install protoc
-        run: sudo apt-get install -y protobuf-compiler
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build protobuf-compiler python3-pip python3-protobuf
       - name: Install Python packages
         run: |
-          pip install --no-cache-dir \
-            "protobuf==3.20.3" \
-            "grpcio-tools==1.48.2" \
-            json5 \
-            pyelftools \
-            itanium_demangler \
-            setuptools
-      - name: Pre-generate nanopb_pb2
-        run: |
-          cd vendor/nanopb/generator/proto
-          python3 -c "
-          import subprocess, sys
-          result = subprocess.run(
-            ['protoc', '--python_out=.', 'nanopb.proto', '-I.'],
-            capture_output=True, text=True
-          )
-          print(result.stdout)
-          print(result.stderr)
-          sys.exit(result.returncode)
-          "
+          pip3 install --no-cache-dir json5 pyelftools itanium_demangler setuptools
       - name: Compile
         run: ./build.py --ci -- ${{ matrix.profile }}
       - name: Upload result
