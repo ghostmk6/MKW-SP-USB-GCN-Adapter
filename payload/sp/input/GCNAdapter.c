@@ -7,7 +7,28 @@
 
 // GCNAdapter.c
 // Direct IOS USB HID implementation for the WUP-028 GameCube controller adapter.
-// Fixed device count bug, added debug logs, multiple init sends.
+//
+// Uses /dev/usb/hid5 (IOS57+, vWii) with fallback to /dev/usb/hid (IOS37/53).
+// This bypasses MKW-SP's Usb.c storage stack entirely and talks directly to
+// the IOS HID module, which is the only approach that works on vWii.
+//
+// Protocol reference (from Chadderz wup-028-bslug):
+//   HID5 flow:
+//     1) IOS_Ioctl GET_VERSION    -> must return 0x00050001
+//     2) IOS_Ioctl GET_DEVICE_CHANGE -> returns device list
+//     3) IOS_Ioctl ATTACH_FINISH
+//     4) Find WUP-028 (VID 057E PID 0337)
+//     5) IOS_Ioctl SET_RESUME     -> wake device
+//     6) IOS_Ioctl GET_DEVICE_PARAMETERS -> required even if unused
+//     7) IOS_Ioctl INTERRUPT (OUT) -> send 0x13 init command
+//     8) IOS_Ioctl INTERRUPT (IN)  -> poll 37-byte report each frame
+//
+//   HID4 flow:
+//     1) IOS_Ioctl GET_VERSION    -> must return 0x00040001
+//     2) IOS_Ioctl GET_DEVICE_CHANGE -> returns device list
+//     3) Find WUP-028
+//     4) IOS_Ioctl INTERRUPT_OUT  -> send 0x13 init command
+//     5) IOS_Ioctl INTERRUPT_IN   -> poll 37-byte report each frame
 
 // ---------------------------------------------------------------------------
 // HID5 ioctl numbers (/dev/usb/hid5, IOS57+, used by vWii)
@@ -52,6 +73,7 @@ typedef struct {
 #define HID4_VERSION 0x00040001
 #define HID4_DEVICE_CHANGE_WORDS 0x180
 
+// HID4 interrupt command block (used for both IN and OUT)
 typedef struct {
     u32 deviceId;
     u8 endpoint;
@@ -102,6 +124,7 @@ static bool s_connected = false;
 static u32 s_deviceId = 0;
 static GCNPortState s_ports[GCN_PORT_COUNT];
 
+// All IOS DMA buffers must be 32-byte aligned
 static u8 s_versionBuf[32] __attribute__((aligned(32)));
 static u32 s_hid4DevChangeBuf[HID4_DEVICE_CHANGE_WORDS] __attribute__((aligned(32)));
 static Hid5DeviceEntry s_hid5DevChangeBuf[HID5_DEVICE_CHANGE_SIZE] __attribute__((aligned(32)));
@@ -113,7 +136,7 @@ static Hid5InterruptCmd s_hid5Cmd __attribute__((aligned(32)));
 static Hid4InterruptCmd s_hid4Cmd __attribute__((aligned(32)));
 
 // ---------------------------------------------------------------------------
-// Report parsing
+// Report parsing (shared between HID4 and HID5)
 // ---------------------------------------------------------------------------
 static void parseReport(const u8 *buf) {
     for (u32 i = 0; i < GCN_PORT_COUNT; i++) {
@@ -155,84 +178,90 @@ static void parseReport(const u8 *buf) {
 }
 
 // ---------------------------------------------------------------------------
-// HID5 Implementation
+// HID5 implementation (/dev/usb/hid5, vWii / IOS57+)
 // ---------------------------------------------------------------------------
 static bool hid5Init(void) {
     s_fd = IOS_Open("/dev/usb/hid5", 0);
     if (s_fd < 0) {
-        SP_LOG("HID5: failed to open /dev/usb/hid5");
         return false;
     }
 
+    // 1) Check version
     if (IOS_Ioctl(s_fd, HID5_GET_VERSION, NULL, 0, s_versionBuf, sizeof(s_versionBuf)) < 0) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
-    u32 ver = (u32)s_versionBuf[0] << 24 | (u32)s_versionBuf[1] << 16 |
-              (u32)s_versionBuf[2] << 8 | (u32)s_versionBuf[3];
+
+    u32 ver = (u32)s_versionBuf[0] << 24 |
+              (u32)s_versionBuf[1] << 16 |
+              (u32)s_versionBuf[2] << 8  |
+              (u32)s_versionBuf[3];
+
     if (ver != HID5_VERSION) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
 
-    s32 count = IOS_Ioctl(s_fd, HID5_GET_DEVICE_CHANGE, NULL, 0, s_hid5DevChangeBuf,
-            sizeof(s_hid5DevChangeBuf));
+    // 2) Get device list
+    s32 count = IOS_Ioctl(
+        s_fd,
+        HID5_GET_DEVICE_CHANGE,
+        NULL,
+        0,
+        s_hid5DevChangeBuf,
+        sizeof(s_hid5DevChangeBuf)
+    );
+
     if (count < 0) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
 
-    SP_LOG("HID5: raw count = %d bytes", count);
-    s32 deviceCount = count / sizeof(Hid5DeviceEntry);
-    SP_LOG("HID5: device count = %d", deviceCount);
-    for (s32 i = 0; i < deviceCount; i++) {
-        SP_LOG("Device %d: VID=%04x PID=%04x ID=%08x",
-            i,
-            s_hid5DevChangeBuf[i].vid,
-            s_hid5DevChangeBuf[i].pid,
-            s_hid5DevChangeBuf[i].id);
-    }
-
+    // 3) Attach finish (required by HID5)
     IOS_Ioctl(s_fd, HID5_ATTACH_FINISH, NULL, 0, NULL, 0);
 
+    // 4) Find WUP-028
     s_deviceId = 0;
-    for (s32 i = 0; i < deviceCount; i++) {
-        if (s_hid5DevChangeBuf[i].vid == WUP028_VID && s_hid5DevChangeBuf[i].pid == WUP028_PID) {
+    for (s32 i = 0; i < count; i++) {
+        if (s_hid5DevChangeBuf[i].vid == WUP028_VID &&
+            s_hid5DevChangeBuf[i].pid == WUP028_PID) {
             s_deviceId = s_hid5DevChangeBuf[i].id;
             break;
         }
     }
+
     if (s_deviceId == 0) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
 
-    // Resume
+    // 5) Resume (wake) the device
     memset(s_cmdBuf, 0, sizeof(s_cmdBuf));
-    memcpy(s_cmdBuf, &s_deviceId, sizeof(u32));
-    s_cmdBuf[4] = 0;
+    *(u32 *)s_cmdBuf = s_deviceId;
+    s_cmdBuf[4] = 0; // not suspended
     IOS_Ioctl(s_fd, HID5_SET_RESUME, s_cmdBuf, 8, NULL, 0);
 
-    // Get device parameters
+    // 6) Get device parameters (required even if unused)
     memset(s_cmdBuf, 0, sizeof(s_cmdBuf));
-    memcpy(s_cmdBuf, &s_deviceId, sizeof(u32));
+    *(u32 *)s_cmdBuf = s_deviceId;
     IOS_Ioctl(s_fd, HID5_GET_DEVICE_PARAMETERS, s_cmdBuf, 8, s_paramBuf, sizeof(s_paramBuf));
 
-    // Send init multiple times
+    // 7) Send init command 0x13
+    s_cmdBuf[0] = CMD_INIT;
     memset(&s_hid5Cmd, 0, sizeof(s_hid5Cmd));
     s_hid5Cmd.deviceId = s_deviceId;
     s_hid5Cmd.endpoint = EP_OUT;
     s_hid5Cmd.length = 1;
     s_hid5Cmd.data = s_cmdBuf;
 
-    for (int i = 0; i < 5; i++) {
-        s_cmdBuf[0] = CMD_INIT;
-        IOS_Ioctl(s_fd, HID5_INTERRUPT, &s_hid5Cmd, sizeof(s_hid5Cmd), NULL, 0);
-        OSSleepMilliseconds(10);
+    if (IOS_Ioctl(s_fd, HID5_INTERRUPT, &s_hid5Cmd, sizeof(s_hid5Cmd), NULL, 0) < 0) {
+        IOS_Close(s_fd);
+        s_fd = -1;
+        return false;
     }
 
     s_hidVersion = HID_VERSION_5;
@@ -246,16 +275,18 @@ static void hid5Poll(void) {
     s_hid5Cmd.endpoint = EP_IN;
     s_hid5Cmd.length = REPORT_SIZE;
     s_hid5Cmd.data = s_reportBuf;
-    if (IOS_Ioctl(s_fd, HID5_INTERRUPT, &s_hid5Cmd, sizeof(s_hid5Cmd), s_reportBuf, REPORT_SIZE) <
-        0) {
+
+    if (IOS_Ioctl(s_fd, HID5_INTERRUPT, &s_hid5Cmd, sizeof(s_hid5Cmd), s_reportBuf, REPORT_SIZE) < 0) {
         SP_LOG("GCNAdapter: HID5 poll failed");
         s_connected = false;
         memset(s_ports, 0, sizeof(s_ports));
         return;
     }
+
     if (s_reportBuf[0] != REPORT_ID) {
         return;
     }
+
     parseReport(s_reportBuf);
 }
 
@@ -265,6 +296,7 @@ static void hid5SendRumble(void) {
         s_rumbleBuf[1 + i] = s_ports[i].rumble ? 0x01 : 0x00;
         s_ports[i].rumble = false;
     }
+
     memset(&s_hid5Cmd, 0, sizeof(s_hid5Cmd));
     s_hid5Cmd.deviceId = s_deviceId;
     s_hid5Cmd.endpoint = EP_OUT;
@@ -274,61 +306,75 @@ static void hid5SendRumble(void) {
 }
 
 // ---------------------------------------------------------------------------
-// HID4 Implementation (unchanged except minimal logging)
+// HID4 implementation (/dev/usb/hid, IOS37/53, older Wii)
 // ---------------------------------------------------------------------------
 static bool hid4Init(void) {
     s_fd = IOS_Open("/dev/usb/hid", 0);
     if (s_fd < 0) {
-        SP_LOG("HID4: failed to open /dev/usb/hid");
         return false;
     }
 
+    // 1) Check version
     if (IOS_Ioctl(s_fd, HID4_GET_VERSION, NULL, 0, s_versionBuf, sizeof(s_versionBuf)) < 0) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
-    u32 ver = (u32)s_versionBuf[0] << 24 | (u32)s_versionBuf[1] << 16 |
-              (u32)s_versionBuf[2] << 8 | (u32)s_versionBuf[3];
+
+    u32 ver = (u32)s_versionBuf[0] << 24 |
+              (u32)s_versionBuf[1] << 16 |
+              (u32)s_versionBuf[2] << 8  |
+              (u32)s_versionBuf[3];
+
     if (ver != HID4_VERSION) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
 
+    // 2) Get device list
     if (IOS_Ioctl(s_fd, HID4_GET_DEVICE_CHANGE, NULL, 0, s_hid4DevChangeBuf,
-                sizeof(s_hid4DevChangeBuf)) < 0) {
+                  sizeof(s_hid4DevChangeBuf)) < 0) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
 
+    // 3) Find WUP-028 in the word array
     s_deviceId = 0;
     for (u32 i = 0; i < HID4_DEVICE_CHANGE_WORDS && s_hid4DevChangeBuf[i] < HID4_DEVICE_CHANGE_WORDS;) {
         u32 entryLen = s_hid4DevChangeBuf[i];
-        if (entryLen == 0) break;
+        if (entryLen == 0) {
+            break;
+        }
+
         u32 deviceId = s_hid4DevChangeBuf[i + 1];
         u32 vidPid = s_hid4DevChangeBuf[i + 2];
         u16 vid = (u16)(vidPid >> 16);
         u16 pid = (u16)(vidPid & 0xFFFF);
+
         if (vid == WUP028_VID && pid == WUP028_PID) {
             s_deviceId = deviceId;
             break;
         }
+
         i += entryLen / 4;
     }
+
     if (s_deviceId == 0) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
 
+    // 4) Send init command 0x13 via INTERRUPT_OUT
     s_cmdBuf[0] = CMD_INIT;
     memset(&s_hid4Cmd, 0, sizeof(s_hid4Cmd));
     s_hid4Cmd.deviceId = s_deviceId;
     s_hid4Cmd.endpoint = EP_OUT;
     s_hid4Cmd.length = 1;
     s_hid4Cmd.data = s_cmdBuf;
+
     if (IOS_Ioctl(s_fd, HID4_INTERRUPT_OUT, &s_hid4Cmd, sizeof(s_hid4Cmd), NULL, 0) < 0) {
         IOS_Close(s_fd);
         s_fd = -1;
@@ -346,14 +392,18 @@ static void hid4Poll(void) {
     s_hid4Cmd.endpoint = EP_IN;
     s_hid4Cmd.length = REPORT_SIZE;
     s_hid4Cmd.data = s_reportBuf;
-    if (IOS_Ioctl(s_fd, HID4_INTERRUPT_IN, &s_hid4Cmd, sizeof(s_hid4Cmd), s_reportBuf,
-                REPORT_SIZE) < 0) {
+
+    if (IOS_Ioctl(s_fd, HID4_INTERRUPT_IN, &s_hid4Cmd, sizeof(s_hid4Cmd), s_reportBuf, REPORT_SIZE) < 0) {
         SP_LOG("GCNAdapter: HID4 poll failed");
         s_connected = false;
         memset(s_ports, 0, sizeof(s_ports));
         return;
     }
-    if (s_reportBuf[0] != REPORT_ID) return;
+
+    if (s_reportBuf[0] != REPORT_ID) {
+        return;
+    }
+
     parseReport(s_reportBuf);
 }
 
@@ -363,11 +413,13 @@ static void hid4SendRumble(void) {
         s_rumbleBuf[1 + i] = s_ports[i].rumble ? 0x01 : 0x00;
         s_ports[i].rumble = false;
     }
+
     memset(&s_hid4Cmd, 0, sizeof(s_hid4Cmd));
     s_hid4Cmd.deviceId = s_deviceId;
     s_hid4Cmd.endpoint = EP_OUT;
     s_hid4Cmd.length = 5;
     s_hid4Cmd.data = s_rumbleBuf;
+
     IOS_Ioctl(s_fd, HID4_INTERRUPT_OUT, &s_hid4Cmd, sizeof(s_hid4Cmd), NULL, 0);
 }
 
@@ -379,33 +431,5 @@ void GCNAdapter_init(void) {
     s_hidVersion = HID_NONE;
     s_connected = false;
 
-    if (hid5Init()) {
-        s_connected = true;
-        return;
-    }
-    if (hid4Init()) {
-        s_connected = true;
-        return;
-    }
-
-    SP_LOG("GCNAdapter: No adapter found on HID4 or HID5");
-}
-
-void GCNAdapter_poll(void) {
-    if (!s_connected) return;
-    if (s_hidVersion == HID_VERSION_5) hid5Poll();
-    else if (s_hidVersion == HID_VERSION_4) hid4Poll();
-}
-
-void GCNAdapter_sendRumble(void) {
-    if (!s_connected) return;
-    if (s_hidVersion == HID_VERSION_5) hid5SendRumble();
-    else if (s_hidVersion == HID_VERSION_4) hid4SendRumble();
-}
-
-bool GCNAdapter_isConnected(void) { return s_connected; }
-
-const GCNPortState *GCNAdapter_getPort(u32 port) {
-    if (port >= GCN_PORT_COUNT) return NULL;
-    return &s_ports[port];
-}
+    // Try HID5 first (vWii / IOS57+), fall back to HID4 (IOS37/53)
+    if (hid5
