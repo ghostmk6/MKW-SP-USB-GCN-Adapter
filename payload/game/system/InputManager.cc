@@ -1,6 +1,10 @@
 #include "InputManager.hh"
 
+extern "C" {
 #include "sp/input/GCNAdapter.h"
+}
+
+extern bool g_speedModIsEnabled;
 
 #include "game/system/RaceConfig.hh"
 #include "game/system/RaceManager.hh"
@@ -17,7 +21,7 @@ extern "C" {
 namespace System {
 
 RaceInputState::RaceInputState() {
-    Reset(*this);
+Reset(*this);
 }
 
 RaceInputState::~RaceInputState() = default;
@@ -25,42 +29,42 @@ RaceInputState::~RaceInputState() = default;
 Pad::~Pad() = default;
 
 void Pad::processSimplified(RaceInputState &raceInputState, bool isPressed) {
-    auto *saveManager = System::SaveManager::Instance();
-    auto setting = saveManager->getSetting<SP::ClientSettings::Setting::SimplifiedControls>();
-    switch (setting) {
-    case SP::ClientSettings::SimplifiedControls::Off:
-        return;
-    case SP::ClientSettings::SimplifiedControls::NonExclusive:
-        if (raceInputState.rawTrick != 0) {
-            return;
-        }
-        break;
-    case SP::ClientSettings::SimplifiedControls::Exclusive:
-        raceInputState.rawTrick = 0;
-        raceInputState.trick = 0;
-        break;
-    }
+auto *saveManager = System::SaveManager::Instance();
+auto setting = saveManager->getSetting<SP::ClientSettings::Setting::SimplifiedControls>();
+switch (setting) {
+case SP::ClientSettings::SimplifiedControls::Off:
+return;
+case SP::ClientSettings::SimplifiedControls::NonExclusive:
+if (raceInputState.rawTrick != 0) {
+return;
+}
+break;
+case SP::ClientSettings::SimplifiedControls::Exclusive:
+raceInputState.rawTrick = 0;
+raceInputState.trick = 0;
+break;
+}
 
-    if (!isPressed) {
-        return;
-    }
+if (!isPressed) {
+return;
+}
 
-    SPFooter::OnSimplifiedControls();
+SPFooter::OnSimplifiedControls();
 
-    if (std::abs(raceInputState.rawStick.x - 7) <= 2 * std::abs(raceInputState.rawStick.y - 7)) {
-        raceInputState.rawTrick = raceInputState.rawStick.y < 7 ? Trick::Down : Trick::Up;
-    } else {
-        raceInputState.rawTrick = raceInputState.rawStick.x < 7 ? Trick::Left : Trick::Right;
-    }
+if (std::abs(raceInputState.rawStick.x - 7) <= 2 * std::abs(raceInputState.rawStick.y - 7)) {
+raceInputState.rawTrick = raceInputState.rawStick.y < 7 ? Trick::Down : Trick::Up;
+} else {
+raceInputState.rawTrick = raceInputState.rawStick.x < 7 ? Trick::Left : Trick::Right;
+}
 
-    bool isMirror = InputManager::Instance()->isMirror();
-    if (isMirror && raceInputState.rawTrick == Trick::Left) {
-        raceInputState.trick = Trick::Right;
-    } else if (isMirror && raceInputState.rawTrick == Trick::Right) {
-        raceInputState.trick = Trick::Left;
-    } else {
-        raceInputState.trick = raceInputState.rawTrick;
-    }
+bool isMirror = InputManager::Instance()->isMirror();
+if (isMirror && raceInputState.rawTrick == Trick::Left) {
+raceInputState.trick = Trick::Right;
+} else if (isMirror && raceInputState.rawTrick == Trick::Right) {
+raceInputState.trick = Trick::Left;
+} else {
+raceInputState.trick = raceInputState.rawTrick;
+}
 }
 
 UserPad::UserPad() = default;
@@ -68,354 +72,353 @@ UserPad::UserPad() = default;
 UserPad::~UserPad() = default;
 
 void WiiPad::process(RaceInputState &raceInputState, UIInputState &uiInputState) {
-    REPLACED(process)(raceInputState, uiInputState);
+REPLACED(process)(raceInputState, uiInputState);
 
-    if (InputManager::Instance()->isMirror()) {
-        uiInputState.stick.x *= -1.0f;
-    }
+if (InputManager::Instance()->isMirror()) {
+uiInputState.stick.x *= -1.0f;
+}
 }
 
 void WiiPad::processClassic(void *r4, RaceInputState &raceInputState, UIInputState &uiInputState) {
-    REPLACED(processClassic)(r4, raceInputState, uiInputState);
+REPLACED(processClassic)(r4, raceInputState, uiInputState);
 
-    processSimplified(raceInputState, raceInputState.rawButtons & KPAD_CL_TRIGGER_ZL);
+processSimplified(raceInputState, raceInputState.rawButtons & KPAD_CL_TRIGGER_ZL);
 
-    if (auto saveStateManager = SP::SaveStateManager::Instance()) {
-        saveStateManager->processInput(raceInputState.rawButtons & KPAD_CL_BUTTON_MINUS);
-    }
+if (auto saveStateManager = SP::SaveStateManager::Instance()) {
+saveStateManager->processInput(raceInputState.rawButtons & KPAD_CL_BUTTON_MINUS);
+}
 }
 
 void GCPad::process(RaceInputState &raceInputState, UIInputState &uiInputState) {
-    s32 controllerId = getControllerId();
-    if (controllerId >= 0 && static_cast<u32>(controllerId) < GCN_PORT_COUNT) {
-        const GCNPortState *port = GCNAdapter_getPort(static_cast<u32>(controllerId));
-        if (GCNAdapter_isConnected() && port && port->connected) {
-            RaceInputState::Reset(raceInputState);
+s32 controllerId = getControllerId();
+if (controllerId >= 0 && static_cast<u32>(controllerId) < GCN_PORT_COUNT) {
+const GCNPortState *port = GCNAdapter_getPort(static_cast<u32>(controllerId));
+if (GCNAdapter_isConnected() && port && port->connected) {
+RaceInputState::Reset(raceInputState);
 
-            raceInputState.accelerate = port->a;
-            raceInputState.brake = port->b;
-            raceInputState.item = port->l || port->triggerL > 170;
-            raceInputState.drift = port->r || port->triggerR > 170;
+raceInputState.accelerate = port->a;
+raceInputState.brake = port->b;
+raceInputState.item = port->l || port->triggerL > 170;
+raceInputState.drift = port->r || port->triggerR > 170;
 
-            u16 rawButtons = 0;
-            if (port->dpadLeft) {
-                rawButtons |= PAD_BUTTON_LEFT;
-            }
-            if (port->dpadRight) {
-                rawButtons |= PAD_BUTTON_RIGHT;
-            }
-            if (port->dpadDown) {
-                rawButtons |= PAD_BUTTON_DOWN;
-            }
-            if (port->dpadUp) {
-                rawButtons |= PAD_BUTTON_UP;
-            }
-            if (port->z) {
-                rawButtons |= PAD_TRIGGER_Z;
-            }
-            if (port->r || port->triggerR > 170) {
-                rawButtons |= PAD_TRIGGER_R;
-            }
-            if (port->l || port->triggerL > 170) {
-                rawButtons |= PAD_TRIGGER_L;
-            }
-            if (port->a) {
-                rawButtons |= PAD_BUTTON_A;
-            }
-            if (port->b) {
-                rawButtons |= PAD_BUTTON_B;
-            }
-            if (port->x) {
-                rawButtons |= PAD_BUTTON_X;
-            }
-            if (port->y) {
-                rawButtons |= PAD_BUTTON_Y;
-            }
-            if (port->start) {
-                rawButtons |= PAD_BUTTON_START;
-            }
-            raceInputState.rawButtons = rawButtons;
+u16 rawButtons = 0;
+if (port->dpadLeft) {
+rawButtons |= PAD_BUTTON_LEFT;
+}
+if (port->dpadRight) {
+rawButtons |= PAD_BUTTON_RIGHT;
+}
+if (port->dpadDown) {
+rawButtons |= PAD_BUTTON_DOWN;
+}
+if (port->dpadUp) {
+rawButtons |= PAD_BUTTON_UP;
+}
+if (port->z) {
+rawButtons |= PAD_TRIGGER_Z;
+}
+if (port->r || port->triggerR > 170) {
+rawButtons |= PAD_TRIGGER_R;
+}
+if (port->l || port->triggerL > 170) {
+rawButtons |= PAD_TRIGGER_L;
+}
+if (port->a) {
+rawButtons |= PAD_BUTTON_A;
+}
+if (port->b) {
+rawButtons |= PAD_BUTTON_B;
+}
+if (port->x) {
+rawButtons |= PAD_BUTTON_X;
+}
+if (port->y) {
+rawButtons |= PAD_BUTTON_Y;
+}
+if (port->start) {
+rawButtons |= PAD_BUTTON_START;
+}
+raceInputState.rawButtons = rawButtons;
 
-            s32 sx = static_cast<s32>(port->stickX) - 128;
-            s32 sy = static_cast<s32>(port->stickY) - 128;
-            auto scaleAxis = [](s32 raw) -> u8 {
-                s32 scaled = raw * 14 / 127;
-                if (scaled < -7) {
-                    scaled = -7;
-                }
-                if (scaled > 7) {
-                    scaled = 7;
-                }
-                return static_cast<u8>(scaled + 7);
-            };
-            u8 rawStickX = scaleAxis(sx);
-            u8 rawStickY = scaleAxis(sy);
-            RaceInputState::SetStickX(raceInputState, rawStickX);
-            RaceInputState::SetStickY(raceInputState, rawStickY);
-            raceInputState.rawStick.x = rawStickX;
-            raceInputState.rawStick.y = rawStickY;
+s32 sx = static_cast<s32>(port->stickX) - 128;
+s32 sy = static_cast<s32>(port->stickY) - 128;
+auto scaleAxis = [](s32 raw) -> u8 {
+s32 scaled = raw * 14 / 127;
+if (scaled < -7) {
+scaled = -7;
+}
+if (scaled > 7) {
+scaled = 7;
+}
+return static_cast<u8>(scaled + 7);
+};
+u8 rawStickX = scaleAxis(sx);
+u8 rawStickY = scaleAxis(sy);
+RaceInputState::SetStickX(raceInputState, rawStickX);
+RaceInputState::SetStickY(raceInputState, rawStickY);
+raceInputState.rawStick.x = rawStickX;
+raceInputState.rawStick.y = rawStickY;
 
-            u8 trickRaw = Trick::Off;
-            if (port->dpadUp) {
-                trickRaw = Trick::Up;
-            }
-            if (port->dpadDown) {
-                trickRaw = Trick::Down;
-            }
-            if (port->dpadLeft) {
-                trickRaw = Trick::Left;
-            }
-            if (port->dpadRight) {
-                trickRaw = Trick::Right;
-            }
-            raceInputState.rawTrick = trickRaw;
-            RaceInputState::SetTrick(raceInputState, trickRaw);
+u8 trickRaw = Trick::Off;
+if (port->dpadUp) {
+trickRaw = Trick::Up;
+}
+if (port->dpadDown) {
+trickRaw = Trick::Down;
+}
+if (port->dpadLeft) {
+trickRaw = Trick::Left;
+}
+if (port->dpadRight) {
+trickRaw = Trick::Right;
+}
+raceInputState.rawTrick = trickRaw;
+RaceInputState::SetTrick(raceInputState, trickRaw);
 
-            raceInputState.lookBackwards = port->x;
+raceInputState.lookBackwards = port->x;
 
-            extern bool g_speedModIsEnabled;
-            if (g_speedModIsEnabled && port->b && (port->r || port->triggerR > 170)) {
-                raceInputState.brakeDrift = true;
-            }
+if (g_speedModIsEnabled && port->b && (port->r || port->triggerR > 170)) {
+raceInputState.brakeDrift = true;
+}
 
-            processSimplified(raceInputState, port->z);
+processSimplified(raceInputState, port->z);
 
-            if (auto *saveStateManager = SP::SaveStateManager::Instance()) {
-                saveStateManager->processInput(port->z);
-            }
+if (auto *saveStateManager = SP::SaveStateManager::Instance()) {
+saveStateManager->processInput(port->z);
+}
 
-            raceInputState.isValid = true;
+raceInputState.isValid = true;
 
-            uiInputState.stick.x = static_cast<f32>(sx) / 127.0f;
-            uiInputState.stick.y = -static_cast<f32>(sy) / 127.0f;
+uiInputState.stick.x = static_cast<f32>(sx) / 127.0f;
+uiInputState.stick.y = -static_cast<f32>(sy) / 127.0f;
 
-            if (InputManager::Instance()->isMirror()) {
-                uiInputState.stick.x *= -1.0f;
-            }
-            return;
-        }
-    }
+if (InputManager::Instance()->isMirror()) {
+uiInputState.stick.x *= -1.0f;
+}
+return;
+}
+}
 
-    REPLACED(process)(raceInputState, uiInputState);
+REPLACED(process)(raceInputState, uiInputState);
 
-    processSimplified(raceInputState, raceInputState.rawButtons & PAD_BUTTON_Y);
+processSimplified(raceInputState, raceInputState.rawButtons & PAD_BUTTON_Y);
 
-    if (InputManager::Instance()->isMirror()) {
-        uiInputState.stick.x *= -1.0f;
-    }
+if (InputManager::Instance()->isMirror()) {
+uiInputState.stick.x *= -1.0f;
+}
 }
 
 void GhostPad::process(RaceInputState &raceInputState, UIInputState &uiInputState) {
-    REPLACED(process)(raceInputState, uiInputState);
-    auto *rc = System::RaceConfig::Instance();
-    // Flips the inputs of ghosts whenever the mode is mirror
-    if (rc->raceScenario().mirror) {
-        raceInputState.stick.x *= -1;
-        raceInputState.SetTrick(raceInputState, raceInputState.trick);
-    }
+REPLACED(process)(raceInputState, uiInputState);
+auto *rc = System::RaceConfig::Instance();
+// Flips the inputs of ghosts whenever the mode is mirror
+if (rc->raceScenario().mirror) {
+raceInputState.stick.x *= -1;
+raceInputState.SetTrick(raceInputState, raceInputState.trick);
+}
 }
 
 const Pad *PadProxy::pad() const {
-    return m_pad;
+return m_pad;
 }
 
 const RaceInputState &PadProxy::currentRaceInputState() const {
-    return m_currentRaceInputState;
+return m_currentRaceInputState;
 }
 
 void GhostPadProxy::init() {
-    m_isLocked = true;
+m_isLocked = true;
 }
 
 PadRollback::PadRollback() = default;
 
 void PadRollback::calc(u32 playerId) {
-    auto *raceClient = SP::RaceClient::Instance();
-    if (!raceClient->roomManager().isPlayerRemote(playerId)) {
-        return;
-    }
+auto *raceClient = SP::RaceClient::Instance();
+if (!raceClient->roomManager().isPlayerRemote(playerId)) {
+return;
+}
 
-    u32 time = RaceManager::Instance()->time();
-    if (auto frame = serverFrame(playerId)) {
-        s32 delay = static_cast<s32>(time) - static_cast<s32>(frame->time);
-        if (delay <= 0) {
-            handleFutureFrame(*frame);
-        } else {
-            handlePastFrame(*frame);
-        }
-        for (u32 i = 0; i < m_frames.count(); i++) {
-            if (m_frames[i]->time == time - 1) {
-                applyFrame(playerId, *m_frames[i]);
-                break;
-            }
-        }
-    }
+u32 time = RaceManager::Instance()->time();
+if (auto frame = serverFrame(playerId)) {
+s32 delay = static_cast<s32>(time) - static_cast<s32>(frame->time);
+if (delay <= 0) {
+handleFutureFrame(*frame);
+} else {
+handlePastFrame(*frame);
+}
+for (u32 i = 0; i < m_frames.count(); i++) {
+if (m_frames[i]->time == time - 1) {
+applyFrame(playerId, *m_frames[i]);
+break;
+}
+}
+}
 
-    if (!m_frames.back() || m_frames.back()->time < time) {
-        if (m_frames.full()) {
-            m_frames.pop_front();
-        }
-        auto *proxy = System::InputManager::Instance()->userProxy(playerId);
-        m_frames.push_back({time, proxy->currentRaceInputState()});
-    }
+if (!m_frames.back() || m_frames.back()->time < time) {
+if (m_frames.full()) {
+m_frames.pop_front();
+}
+auto *proxy = System::InputManager::Instance()->userProxy(playerId);
+m_frames.push_back({time, proxy->currentRaceInputState()});
+}
 }
 
 std::optional<PadRollback::Frame> PadRollback::serverFrame(u32 playerId) const {
-    auto serverFrame = SP::RaceClient::Instance()->frame();
-    if (!serverFrame) {
-        return {};
-    }
+auto serverFrame = SP::RaceClient::Instance()->frame();
+if (!serverFrame) {
+return {};
+}
 
-    u32 time = serverFrame->time;
-    const auto &player = serverFrame->players[playerId];
-    RaceInputState inputState;
-    inputState.accelerate = player.inputState.accelerate;
-    inputState.brake = player.inputState.brake;
-    inputState.item = false;
-    inputState.drift = player.inputState.drift;
-    inputState.brakeDrift = player.inputState.brakeDrift; // TODO check for 200cc
-    System::RaceInputState::SetStickX(inputState, player.inputState.stickX);
-    System::RaceInputState::SetStickY(inputState, player.inputState.stickY);
-    System::RaceInputState::SetTrick(inputState, player.inputState.trick);
-    return {{time, inputState}};
+u32 time = serverFrame->time;
+const auto &player = serverFrame->players[playerId];
+RaceInputState inputState;
+inputState.accelerate = player.inputState.accelerate;
+inputState.brake = player.inputState.brake;
+inputState.item = false;
+inputState.drift = player.inputState.drift;
+inputState.brakeDrift = player.inputState.brakeDrift; // TODO check for 200cc
+System::RaceInputState::SetStickX(inputState, player.inputState.stickX);
+System::RaceInputState::SetStickY(inputState, player.inputState.stickY);
+System::RaceInputState::SetTrick(inputState, player.inputState.trick);
+return {{time, inputState}};
 }
 
 void PadRollback::handleFutureFrame(const Frame &frame) {
-    u32 time = System::RaceManager::Instance()->time();
-    while (m_frames.front() && m_frames.front()->time < time) {
-        m_frames.pop_front();
-    }
-    if (!m_frames.full()) {
-        m_frames.push_back(std::move(frame));
-    }
+u32 time = System::RaceManager::Instance()->time();
+while (m_frames.front() && m_frames.front()->time < time) {
+m_frames.pop_front();
+}
+if (!m_frames.full()) {
+m_frames.push_back(std::move(frame));
+}
 }
 
 void PadRollback::handlePastFrame(const Frame &frame) {
-    while (m_frames.front() && m_frames.front()->time < frame.time) {
-        m_frames.pop_front();
-    }
-    auto *rollbackFrame = m_frames.front();
-    if (rollbackFrame && rollbackFrame->time == frame.time) {
-        for (u32 i = 0; i < m_frames.count(); i++) {
-            m_frames[i]->inputState = frame.inputState;
-        }
-    }
+while (m_frames.front() && m_frames.front()->time < frame.time) {
+m_frames.pop_front();
+}
+auto *rollbackFrame = m_frames.front();
+if (rollbackFrame && rollbackFrame->time == frame.time) {
+for (u32 i = 0; i < m_frames.count(); i++) {
+m_frames[i]->inputState = frame.inputState;
+}
+}
 }
 
 void PadRollback::applyFrame(u32 playerId, const Frame &frame) {
-    auto *proxy = System::InputManager::Instance()->userProxy(playerId);
-    proxy->setRaceInputState(frame.inputState);
+auto *proxy = System::InputManager::Instance()->userProxy(playerId);
+proxy->setRaceInputState(frame.inputState);
 }
 
 void PadRollback::reset() {
-    m_frames.reset();
+m_frames.reset();
 }
 
 bool InputManager::isMirror() const {
-    return m_isMirror;
+return m_isMirror;
 }
 
 GhostPadProxy *InputManager::ghostProxy(u32 i) {
-    return &m_ghostProxies[i];
+return &m_ghostProxies[i];
 }
 
 UserPadProxy *InputManager::userProxy(u32 i) {
-    return &m_userProxies[i];
+return &m_userProxies[i];
 }
 
 GhostPadProxy *InputManager::extraGhostProxy(u32 i) {
-    return &m_extraGhostProxies[i];
+return &m_extraGhostProxies[i];
 }
 
 void InputManager::setGhostPad(u32 i, const void *ghostInputs, bool driftIsAuto) {
-    m_extraGhostProxies[i].setPad(&m_extraGhostPads[i], ghostInputs, driftIsAuto);
+m_extraGhostProxies[i].setPad(&m_extraGhostPads[i], ghostInputs, driftIsAuto);
 }
 
 void InputManager::reset() {
-    for (u32 i = 0; i < 12; i++) {
-        m_extraGhostProxies[i].reset();
-    }
+for (u32 i = 0; i < 12; i++) {
+m_extraGhostProxies[i].reset();
+}
 
-    for (u32 i = 0; i < 12; i++) {
-        m_rollbacks[i].reset();
-    }
+for (u32 i = 0; i < 12; i++) {
+m_rollbacks[i].reset();
+}
 
-    REPLACED(reset)();
+REPLACED(reset)();
 }
 
 void InputManager::calcPads(bool isPaused) {
-    REPLACED(calcPads)(isPaused);
+REPLACED(calcPads)(isPaused);
 
-    if (!isPaused) {
-        for (u32 i = 0; i < 12; i++) {
-            m_extraGhostPads[i].calc();
-        }
-    }
+if (!isPaused) {
+for (u32 i = 0; i < 12; i++) {
+m_extraGhostPads[i].calc();
+}
+}
 }
 
 void InputManager::calc() {
-    REPLACED(calc)();
+REPLACED(calc)();
 
-    for (u32 i = 0; i < 12; i++) {
-        m_extraGhostProxies[i].calc(m_isPaused);
-    }
+for (u32 i = 0; i < 12; i++) {
+m_extraGhostProxies[i].calc(m_isPaused);
+}
 
-    GCNAdapter_poll();
-    GCNAdapter_sendRumble();
+GCNAdapter_poll();
+GCNAdapter_sendRumble();
 }
 
 void InputManager::initGhostProxies() {
-    REPLACED(initGhostProxies)();
+REPLACED(initGhostProxies)();
 
-    for (u32 i = 0; i < 12; i++) {
-        m_extraGhostProxies[i].init();
-    }
+for (u32 i = 0; i < 12; i++) {
+m_extraGhostProxies[i].init();
+}
 }
 
 void InputManager::startGhostProxies() {
-    REPLACED(startGhostProxies)();
+REPLACED(startGhostProxies)();
 
-    for (u32 i = 0; i < 12; i++) {
-        m_extraGhostProxies[i].start();
-    }
+for (u32 i = 0; i < 12; i++) {
+m_extraGhostProxies[i].start();
+}
 }
 
 void InputManager::endExtraGhostProxy(u32 playerId) {
-    m_extraGhostProxies[playerId].end();
+m_extraGhostProxies[playerId].end();
 }
 
 void InputManager::endGhostProxies() {
-    REPLACED(endGhostProxies)();
+REPLACED(endGhostProxies)();
 
-    for (u32 i = 0; i < 12; i++) {
-        m_extraGhostProxies[i].end();
-    }
+for (u32 i = 0; i < 12; i++) {
+m_extraGhostProxies[i].end();
+}
 }
 
 void InputManager::calcRollbacks() {
-    for (u32 i = 0; i < 12; i++) {
-        m_rollbacks->calc(i);
-    }
+for (u32 i = 0; i < 12; i++) {
+m_rollbacks->calc(i);
+}
 }
 
 InputManager *InputManager::CreateInstance() {
-    s_instance = new InputManager;
-    assert(s_instance);
+s_instance = new InputManager;
+assert(s_instance);
 
-    s_instance->m_extraGhostPads = new GhostPad[12];
-    s_instance->m_extraGhostProxies = new GhostPadProxy[12];
-    for (u32 i = 0; i < 12; i++) {
-        s_instance->m_extraGhostProxies[i].PadProxy::setPad(&s_instance->m_dummyPad, nullptr);
-    }
-    s_instance->m_rollbacks = new PadRollback[12];
+s_instance->m_extraGhostPads = new GhostPad[12];
+s_instance->m_extraGhostProxies = new GhostPadProxy[12];
+for (u32 i = 0; i < 12; i++) {
+s_instance->m_extraGhostProxies[i].PadProxy::setPad(&s_instance->m_dummyPad, nullptr);
+}
+s_instance->m_rollbacks = new PadRollback[12];
 
-    GCNAdapter_init();
+GCNAdapter_init();
 
-    return s_instance;
+return s_instance;
 }
 
 InputManager *InputManager::Instance() {
-    return s_instance;
+return s_instance;
 }
 
 } // namespace System
