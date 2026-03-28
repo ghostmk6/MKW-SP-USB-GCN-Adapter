@@ -6,7 +6,7 @@
 #include <string.h>
 
 // ---------------------------------------------------------------------------
-// HID5 ioctl numbers (/dev/usb/hid5, IOS57+, used by vWii)
+// HID5
 // ---------------------------------------------------------------------------
 #define HID5_GET_VERSION 0x00
 #define HID5_GET_DEVICE_CHANGE 0x01
@@ -16,7 +16,7 @@
 #define HID5_INTERRUPT 0x09
 
 #define HID5_VERSION 0x00050001
-#define HID5_DEVICE_CHANGE_SIZE 0x20 // max devices
+#define HID5_DEVICE_CHANGE_SIZE 0x20
 
 typedef struct {
     u32 id;
@@ -36,7 +36,7 @@ typedef struct {
 } __attribute__((packed)) Hid5InterruptCmd;
 
 // ---------------------------------------------------------------------------
-// HID4 ioctl numbers (/dev/usb/hid, IOS37/53)
+// HID4
 // ---------------------------------------------------------------------------
 #define HID4_GET_VERSION 0x00
 #define HID4_GET_DEVICE_CHANGE 0x01
@@ -55,7 +55,7 @@ typedef struct {
 } __attribute__((packed)) Hid4InterruptCmd;
 
 // ---------------------------------------------------------------------------
-// WUP-028 constants
+// Constants
 // ---------------------------------------------------------------------------
 #define WUP028_VID 0x057E
 #define WUP028_PID 0x0337
@@ -66,23 +66,27 @@ typedef struct {
 #define REPORT_SIZE 37
 #define REPORT_ID 0x21
 #define PORT_BLOCK 9
+
 #define STATUS_CONNECTED 0x10
 #define STATUS_WIRELESS 0x20
+
 #define BTN0_A (1 << 0)
 #define BTN0_B (1 << 1)
 #define BTN0_X (1 << 2)
 #define BTN0_Y (1 << 3)
+
 #define BTN0_DPAD_LEFT (1 << 4)
 #define BTN0_DPAD_RIGHT (1 << 5)
 #define BTN0_DPAD_DOWN (1 << 6)
 #define BTN0_DPAD_UP (1 << 7)
+
 #define BTN1_START (1 << 0)
 #define BTN1_Z (1 << 1)
 #define BTN1_R (1 << 2)
 #define BTN1_L (1 << 3)
 
 // ---------------------------------------------------------------------------
-// Module state
+// State
 // ---------------------------------------------------------------------------
 typedef enum {
     HID_NONE = 0,
@@ -97,8 +101,10 @@ static u32 s_deviceId = 0;
 static GCNPortState s_ports[GCN_PORT_COUNT];
 
 static u8 s_versionBuf[32] __attribute__((aligned(32)));
-static u32 s_hid4DevChangeBuf[HID4_DEVICE_CHANGE_WORDS] __attribute__((aligned(32)));
-static Hid5DeviceEntry s_hid5DevChangeBuf[HID5_DEVICE_CHANGE_SIZE] __attribute__((aligned(32)));
+static u32 s_hid4DevChangeBuf[HID4_DEVICE_CHANGE_WORDS]
+        __attribute__((aligned(32)));
+static Hid5DeviceEntry s_hid5DevChangeBuf[HID5_DEVICE_CHANGE_SIZE]
+        __attribute__((aligned(32)));
 static u8 s_reportBuf[REPORT_SIZE] __attribute__((aligned(32)));
 static u8 s_cmdBuf[32] __attribute__((aligned(32)));
 static u8 s_rumbleBuf[8] __attribute__((aligned(32)));
@@ -113,6 +119,7 @@ static void parseReport(const u8 *buf) {
     for (u32 i = 0; i < GCN_PORT_COUNT; i++) {
         const u8 *b = buf + 1 + i * PORT_BLOCK;
         GCNPortState *p = &s_ports[i];
+
         bool savedRumble = p->rumble;
 
         u8 status = b[0];
@@ -127,18 +134,22 @@ static void parseReport(const u8 *buf) {
 
         u8 btn0 = b[1];
         u8 btn1 = b[2];
+
         p->a = (btn0 & BTN0_A) != 0;
         p->b = (btn0 & BTN0_B) != 0;
         p->x = (btn0 & BTN0_X) != 0;
         p->y = (btn0 & BTN0_Y) != 0;
+
         p->dpadLeft = (btn0 & BTN0_DPAD_LEFT) != 0;
         p->dpadRight = (btn0 & BTN0_DPAD_RIGHT) != 0;
         p->dpadDown = (btn0 & BTN0_DPAD_DOWN) != 0;
         p->dpadUp = (btn0 & BTN0_DPAD_UP) != 0;
+
         p->start = (btn1 & BTN1_START) != 0;
         p->z = (btn1 & BTN1_Z) != 0;
         p->r = (btn1 & BTN1_R) != 0;
         p->l = (btn1 & BTN1_L) != 0;
+
         p->stickX = b[3];
         p->stickY = b[4];
         p->cstickX = b[5];
@@ -149,28 +160,37 @@ static void parseReport(const u8 *buf) {
 }
 
 // ---------------------------------------------------------------------------
-// HID5 (/dev/usb/hid5, IOS57+)
+// HID5
 // ---------------------------------------------------------------------------
 static bool hid5Init(void) {
     s_fd = IOS_Open("/dev/usb/hid5", 0);
-    if (s_fd < 0) return false;
+    if (s_fd < 0) {
+        return false;
+    }
 
-    if (IOS_Ioctl(s_fd, HID5_GET_VERSION, NULL, 0, s_versionBuf, sizeof(s_versionBuf)) < 0) {
+    if (IOS_Ioctl(s_fd, HID5_GET_VERSION, NULL, 0, s_versionBuf,
+                  sizeof(s_versionBuf)) < 0) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
 
-    u32 ver = (u32)s_versionBuf[0] << 24 | (u32)s_versionBuf[1] << 16 |
-              (u32)s_versionBuf[2] << 8  | (u32)s_versionBuf[3];
+    u32 ver =
+            ((u32)s_versionBuf[0] << 24) |
+            ((u32)s_versionBuf[1] << 16) |
+            ((u32)s_versionBuf[2] << 8) |
+            ((u32)s_versionBuf[3]);
+
     if (ver != HID5_VERSION) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
 
-    s32 count = IOS_Ioctl(s_fd, HID5_GET_DEVICE_CHANGE, NULL, 0, s_hid5DevChangeBuf,
+    s32 count = IOS_Ioctl(s_fd, HID5_GET_DEVICE_CHANGE, NULL, 0,
+                          s_hid5DevChangeBuf,
                           sizeof(s_hid5DevChangeBuf));
+
     if (count < 0) {
         IOS_Close(s_fd);
         s_fd = -1;
@@ -181,12 +201,14 @@ static bool hid5Init(void) {
 
     s_deviceId = 0;
     for (s32 i = 0; i < count; i++) {
-        if (s_hid5DevChangeBuf[i].vid == WUP028_VID && s_hid5DevChangeBuf[i].pid == WUP028_PID) {
+        if (s_hid5DevChangeBuf[i].vid == WUP028_VID &&
+            s_hid5DevChangeBuf[i].pid == WUP028_PID) {
             s_deviceId = s_hid5DevChangeBuf[i].id;
             break;
         }
     }
-    if (!s_deviceId) {
+
+    if (s_deviceId == 0) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
@@ -194,20 +216,27 @@ static bool hid5Init(void) {
 
     memset(s_cmdBuf, 0, sizeof(s_cmdBuf));
     *(u32 *)s_cmdBuf = s_deviceId;
-    s_cmdBuf[4] = 0;
+
     IOS_Ioctl(s_fd, HID5_SET_RESUME, s_cmdBuf, 8, NULL, 0);
 
     memset(s_cmdBuf, 0, sizeof(s_cmdBuf));
     *(u32 *)s_cmdBuf = s_deviceId;
-    IOS_Ioctl(s_fd, HID5_GET_DEVICE_PARAMETERS, s_cmdBuf, 8, s_paramBuf, sizeof(s_paramBuf));
+
+    IOS_Ioctl(s_fd, HID5_GET_DEVICE_PARAMETERS, s_cmdBuf, 8,
+              s_paramBuf, sizeof(s_paramBuf));
 
     s_cmdBuf[0] = CMD_INIT;
+
     memset(&s_hid5Cmd, 0, sizeof(s_hid5Cmd));
     s_hid5Cmd.deviceId = s_deviceId;
     s_hid5Cmd.endpoint = EP_OUT;
     s_hid5Cmd.length = 1;
     s_hid5Cmd.data = s_cmdBuf;
-    IOS_Ioctl(s_fd, HID5_INTERRUPT, &s_hid5Cmd, sizeof(s_hid5Cmd), NULL, 0);
+
+    if (IOS_Ioctl(s_fd, HID5_INTERRUPT, &s_hid5Cmd,
+                  sizeof(s_hid5Cmd), NULL, 0) < 0) {
+        return false;
+    }
 
     s_hidVersion = HID_VERSION_5;
     s_connected = true;
@@ -216,121 +245,163 @@ static bool hid5Init(void) {
 
 static void hid5Poll(void) {
     memset(&s_hid5Cmd, 0, sizeof(s_hid5Cmd));
+
     s_hid5Cmd.deviceId = s_deviceId;
     s_hid5Cmd.endpoint = EP_IN;
     s_hid5Cmd.length = REPORT_SIZE;
     s_hid5Cmd.data = s_reportBuf;
-    if (IOS_Ioctl(s_fd, HID5_INTERRUPT, &s_hid5Cmd, sizeof(s_hid5Cmd), s_reportBuf,
+
+    if (IOS_Ioctl(s_fd, HID5_INTERRUPT, &s_hid5Cmd,
+                  sizeof(s_hid5Cmd), s_reportBuf,
                   REPORT_SIZE) < 0) {
         s_connected = false;
         memset(s_ports, 0, sizeof(s_ports));
         return;
     }
-    if (s_reportBuf[0] == REPORT_ID) parseReport(s_reportBuf);
+
+    if (s_reportBuf[0] == REPORT_ID) {
+        parseReport(s_reportBuf);
+    }
 }
 
 static void hid5SendRumble(void) {
     s_rumbleBuf[0] = CMD_RUMBLE;
+
     for (u32 i = 0; i < GCN_PORT_COUNT; i++) {
-        s_rumbleBuf[1 + i] = s_ports[i].rumble ? 0x01 : 0x00;
+        s_rumbleBuf[1 + i] = s_ports[i].rumble ? 1 : 0;
         s_ports[i].rumble = false;
     }
+
     memset(&s_hid5Cmd, 0, sizeof(s_hid5Cmd));
+
     s_hid5Cmd.deviceId = s_deviceId;
     s_hid5Cmd.endpoint = EP_OUT;
     s_hid5Cmd.length = 5;
     s_hid5Cmd.data = s_rumbleBuf;
-    IOS_Ioctl(s_fd, HID5_INTERRUPT, &s_hid5Cmd, sizeof(s_hid5Cmd), NULL, 0);
+
+    IOS_Ioctl(s_fd, HID5_INTERRUPT, &s_hid5Cmd,
+              sizeof(s_hid5Cmd), NULL, 0);
 }
 
 // ---------------------------------------------------------------------------
-// HID4 (/dev/usb/hid, IOS37/53)
+// HID4
 // ---------------------------------------------------------------------------
 static bool hid4Init(void) {
     s_fd = IOS_Open("/dev/usb/hid", 0);
-    if (s_fd < 0) return false;
+    if (s_fd < 0) {
+        return false;
+    }
 
-    if (IOS_Ioctl(s_fd, HID4_GET_VERSION, NULL, 0, s_versionBuf, sizeof(s_versionBuf)) < 0) {
+    if (IOS_Ioctl(s_fd, HID4_GET_VERSION, NULL, 0,
+                  s_versionBuf, sizeof(s_versionBuf)) < 0) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
 
-    u32 ver = (u32)s_versionBuf[0] << 24 | (u32)s_versionBuf[1] << 16 |
-              (u32)s_versionBuf[2] << 8  | (u32)s_versionBuf[3];
+    u32 ver =
+            ((u32)s_versionBuf[0] << 24) |
+            ((u32)s_versionBuf[1] << 16) |
+            ((u32)s_versionBuf[2] << 8) |
+            ((u32)s_versionBuf[3]);
+
     if (ver != HID4_VERSION) {
         IOS_Close(s_fd);
         s_fd = -1;
         return false;
     }
 
-    if (IOS_Ioctl(s_fd, HID4_GET_DEVICE_CHANGE, NULL, 0, s_hid4DevChangeBuf,
+    if (IOS_Ioctl(s_fd, HID4_GET_DEVICE_CHANGE, NULL, 0,
+                  s_hid4DevChangeBuf,
                   sizeof(s_hid4DevChangeBuf)) < 0) {
-        IOS_Close(s_fd);
-        s_fd = -1;
         return false;
     }
 
     s_deviceId = 0;
-    for (u32 i = 0; i < HID4_DEVICE_CHANGE_WORDS && s_hid4DevChangeBuf[i] < HID4_DEVICE_CHANGE_WORDS;) {
+
+    for (u32 i = 0;
+         i < HID4_DEVICE_CHANGE_WORDS &&
+         s_hid4DevChangeBuf[i] < HID4_DEVICE_CHANGE_WORDS;) {
+
         u32 entryLen = s_hid4DevChangeBuf[i];
-        if (!entryLen) break;
+
+        if (entryLen == 0) {
+            break;
+        }
+
         u32 deviceId = s_hid4DevChangeBuf[i + 1];
         u32 vidPid = s_hid4DevChangeBuf[i + 2];
+
         u16 vid = (u16)(vidPid >> 16);
         u16 pid = (u16)(vidPid & 0xFFFF);
+
         if (vid == WUP028_VID && pid == WUP028_PID) {
             s_deviceId = deviceId;
             break;
         }
+
         i += entryLen / 4;
     }
-    if (!s_deviceId) {
-        IOS_Close(s_fd);
-        s_fd = -1;
+
+    if (s_deviceId == 0) {
         return false;
     }
 
     s_cmdBuf[0] = CMD_INIT;
+
     memset(&s_hid4Cmd, 0, sizeof(s_hid4Cmd));
     s_hid4Cmd.deviceId = s_deviceId;
     s_hid4Cmd.endpoint = EP_OUT;
     s_hid4Cmd.length = 1;
     s_hid4Cmd.data = s_cmdBuf;
-    IOS_Ioctl(s_fd, HID4_INTERRUPT_OUT, &s_hid4Cmd, sizeof(s_hid4Cmd), NULL, 0);
+
+    IOS_Ioctl(s_fd, HID4_INTERRUPT_OUT, &s_hid4Cmd,
+              sizeof(s_hid4Cmd), NULL, 0);
 
     s_hidVersion = HID_VERSION_4;
     s_connected = true;
+
     return true;
 }
 
 static void hid4Poll(void) {
     memset(&s_hid4Cmd, 0, sizeof(s_hid4Cmd));
+
     s_hid4Cmd.deviceId = s_deviceId;
     s_hid4Cmd.endpoint = EP_IN;
     s_hid4Cmd.length = REPORT_SIZE;
     s_hid4Cmd.data = s_reportBuf;
-    if (IOS_Ioctl(s_fd, HID4_INTERRUPT_IN, &s_hid4Cmd, sizeof(s_hid4Cmd), s_reportBuf,
+
+    if (IOS_Ioctl(s_fd, HID4_INTERRUPT_IN, &s_hid4Cmd,
+                  sizeof(s_hid4Cmd), s_reportBuf,
                   REPORT_SIZE) < 0) {
         s_connected = false;
         memset(s_ports, 0, sizeof(s_ports));
         return;
     }
-    if (s_reportBuf[0] == REPORT_ID) parseReport(s_reportBuf);
+
+    if (s_reportBuf[0] == REPORT_ID) {
+        parseReport(s_reportBuf);
+    }
 }
 
 static void hid4SendRumble(void) {
     s_rumbleBuf[0] = CMD_RUMBLE;
+
     for (u32 i = 0; i < GCN_PORT_COUNT; i++) {
-        s_rumbleBuf[1 + i] = s_ports[i].rumble ? 0x01 : 0x00;
+        s_rumbleBuf[1 + i] = s_ports[i].rumble ? 1 : 0;
         s_ports[i].rumble = false;
     }
+
     memset(&s_hid4Cmd, 0, sizeof(s_hid4Cmd));
+
     s_hid4Cmd.deviceId = s_deviceId;
     s_hid4Cmd.endpoint = EP_OUT;
     s_hid4Cmd.length = 5;
     s_hid4Cmd.data = s_rumbleBuf;
-    IOS_Ioctl(s_fd, HID4_INTERRUPT_OUT, &s_hid4Cmd, sizeof(s_hid4Cmd), NULL, 0);
+
+    IOS_Ioctl(s_fd, HID4_INTERRUPT_OUT, &s_hid4Cmd,
+              sizeof(s_hid4Cmd), NULL, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -338,22 +409,37 @@ static void hid4SendRumble(void) {
 // ---------------------------------------------------------------------------
 void GCNAdapter_init(void) {
     memset(s_ports, 0, sizeof(s_ports));
+
     s_hidVersion = HID_NONE;
     s_connected = false;
 
-    if (!hid5Init()) hid4Init();
+    if (!hid5Init()) {
+        hid4Init();
+    }
 }
 
 void GCNAdapter_poll(void) {
-    if (!s_connected) return;
-    if (s_hidVersion == HID_VERSION_5) hid5Poll();
-    else if (s_hidVersion == HID_VERSION_4) hid4Poll();
+    if (!s_connected) {
+        return;
+    }
+
+    if (s_hidVersion == HID_VERSION_5) {
+        hid5Poll();
+    } else if (s_hidVersion == HID_VERSION_4) {
+        hid4Poll();
+    }
 }
 
 void GCNAdapter_sendRumble(void) {
-    if (!s_connected) return;
-    if (s_hidVersion == HID_VERSION_5) hid5SendRumble();
-    else if (s_hidVersion == HID_VERSION_4) hid4SendRumble();
+    if (!s_connected) {
+        return;
+    }
+
+    if (s_hidVersion == HID_VERSION_5) {
+        hid5SendRumble();
+    } else if (s_hidVersion == HID_VERSION_4) {
+        hid4SendRumble();
+    }
 }
 
 bool GCNAdapter_isConnected(void) {
@@ -361,6 +447,9 @@ bool GCNAdapter_isConnected(void) {
 }
 
 const GCNPortState *GCNAdapter_getPort(u32 port) {
-    if (port >= GCN_PORT_COUNT) return NULL;
+    if (port >= GCN_PORT_COUNT) {
+        return NULL;
+    }
+
     return &s_ports[port];
 }
