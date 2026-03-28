@@ -55,7 +55,7 @@ jobs:
       - name: Install itanium_demangler
         run: pip install itanium_demangler
       - name: Install protobuf
-        run: pip install protobuf
+        run: pip install "protobuf==3.20.3"
       - name: Install setuptools
         run: pip install setuptools
       - name: Compile
@@ -65,7 +65,7 @@ jobs:
         with:
           name: mkw-sp-${{ matrix.profile }}
           path: out/${{ matrix.profile }}
- 
+
   format:
     name: Format
     runs-on: ubuntu-22.04
